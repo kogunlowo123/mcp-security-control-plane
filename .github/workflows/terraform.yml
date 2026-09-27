@@ -61,7 +61,7 @@ jobs:
       prod-changed: ${{ steps.filter.outputs.prod }}
       shared-changed: ${{ steps.filter.outputs.shared }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -92,7 +92,7 @@ jobs:
     env:
       TF_VAR_environment: dev
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Terraform
         uses: ./.github/actions/setup-terraform
@@ -163,7 +163,7 @@ jobs:
     env:
       TF_VAR_environment: dev
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Terraform
         uses: ./.github/actions/setup-terraform
@@ -201,7 +201,7 @@ jobs:
     env:
       TF_VAR_environment: staging
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Terraform
         uses: ./.github/actions/setup-terraform
@@ -243,7 +243,7 @@ jobs:
     env:
       TF_VAR_environment: staging
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Terraform
         uses: ./.github/actions/setup-terraform
@@ -281,7 +281,7 @@ jobs:
     env:
       TF_VAR_environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Terraform
         uses: ./.github/actions/setup-terraform
@@ -322,7 +322,7 @@ jobs:
     env:
       TF_VAR_environment: prod
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Terraform
         uses: ./.github/actions/setup-terraform

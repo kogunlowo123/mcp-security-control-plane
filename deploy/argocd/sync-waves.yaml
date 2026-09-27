@@ -1,0 +1,37 @@
+---
+# ArgoCD Sync Wave annotations for ordered deployment
+# Lower numbers deploy first
+sync_waves:
+  # Wave 0: Infrastructure CRDs and namespaces
+  - wave: 0
+    resources:
+      - kind: Namespace
+        name: mcp-security
+      - kind: ExternalSecret
+        name: database-credentials
+      - kind: ExternalSecret
+        name: jwt-signing-key
+
+  # Wave 1: Storage and databases
+  - wave: 1
+    resources:
+      - kind: Job
+        name: db-migrations
+
+  # Wave 2: Core platform services
+  - wave: 2
+    resources:
+      - kind: Deployment
+        name: mcp-api
+
+  # Wave 3: Agent runtime
+  - wave: 3
+    resources:
+      - kind: Deployment
+        name: mcp-agent-runtime
+
+  # Wave 4: Observability
+  - wave: 4
+    resources:
+      - kind: Deployment
+        name: otel-collector

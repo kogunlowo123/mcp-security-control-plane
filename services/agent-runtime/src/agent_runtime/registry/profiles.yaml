@@ -1,0 +1,94 @@
+# Agent Registry Base Configuration
+# This file defines shared defaults and profile overrides for all agents.
+# Agent-specific files in ./agents/ inherit from and override these defaults.
+
+version: "1.0.0"
+namespace: "mcp-security-control-plane"
+
+# ── Global defaults ───────────────────────────────────────────────────────────
+defaults:
+  temperature: 0.0
+  max_iterations: 5
+  requires_approval: false
+  timeout_seconds: 120
+  retry_attempts: 2
+  retry_backoff_factor: 1.5
+
+# ── Tier configuration ────────────────────────────────────────────────────────
+tiers:
+  T0:
+    description: >
+      Highest automation tier. T0 agents operate autonomously without
+      human-in-the-loop approval. Reserved for time-critical validation
+      tasks (e.g. inline parameter checking before a tool call executes).
+    max_tokens_cap: 4096
+    requires_approval: false
+    allowed_tools:
+      - mcp_audit_query
+      - tool_catalog
+    disallowed_tools:
+      - rag_search
+
+  T1:
+    description: >
+      Standard enterprise tier. T1 agents may require human approval for
+      sensitive operations and have access to broader tooling including RAG.
+    max_tokens_cap: 8192
+    requires_approval: true
+    allowed_tools:
+      - rag_search
+      - mcp_audit_query
+      - tool_catalog
+    disallowed_tools: []
+
+# ── Model allowlist ───────────────────────────────────────────────────────────
+approved_models:
+  - id: "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    alias: "claude-3-5-sonnet"
+    provider: "bedrock"
+    max_output_tokens: 8192
+    recommended_for: ["analysis", "compliance", "reporting"]
+
+  - id: "anthropic.claude-3-haiku-20240307-v1:0"
+    alias: "claude-3-haiku"
+    provider: "bedrock"
+    max_output_tokens: 4096
+    recommended_for: ["classification", "extraction", "fast-validation"]
+
+# ── Tool registry ─────────────────────────────────────────────────────────────
+tools:
+  rag_search:
+    display_name: "RAG Policy Search"
+    tier_minimum: "T1"
+    read_only: true
+    description: "Hybrid vector + BM25 retrieval over MCP security policy corpus"
+
+  mcp_audit_query:
+    display_name: "MCP Audit Log Query"
+    tier_minimum: "T0"
+    read_only: true
+    description: "Query the PostgreSQL audit_log table for tool call records"
+
+  tool_catalog:
+    display_name: "Tool Catalog"
+    tier_minimum: "T0"
+    read_only: true
+    description: "List and inspect approved MCP tools from the control plane catalog"
+
+# ── Guardrail policies ────────────────────────────────────────────────────────
+guardrails:
+  pii_detection: true
+  blocked_topics:
+    - "credential extraction"
+    - "privilege escalation"
+    - "data exfiltration"
+  max_output_length: 32000
+  grounding_required: true
+  citation_validation: true
+
+# ── Observability ─────────────────────────────────────────────────────────────
+observability:
+  tracing_enabled: true
+  metrics_enabled: true
+  log_level: "INFO"
+  otel_service_name: "agent-runtime"

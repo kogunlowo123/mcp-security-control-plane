@@ -1,0 +1,175 @@
+name: Docker Build and Push to ECR
+description: >
+  Composite action to build a Docker image, scan it with Trivy,
+  and push it to Amazon ECR with appropriate tags.
+
+inputs:
+  aws-role-arn:
+    description: IAM role ARN to assume for ECR access
+    required: true
+  aws-region:
+    description: AWS region where ECR repository is located
+    required: false
+    default: "us-east-1"
+  ecr-repository:
+    description: ECR repository name (without registry prefix)
+    required: true
+  image-tag:
+    description: Primary image tag (e.g. git SHA, semver)
+    required: true
+  context:
+    description: Docker build context path
+    required: false
+    default: "."
+  dockerfile:
+    description: Path to the Dockerfile
+    required: false
+    default: "Dockerfile"
+  build-args:
+    description: Build arguments in KEY=VALUE format, one per line
+    required: false
+    default: ""
+  platforms:
+    description: Target platforms for multi-arch build
+    required: false
+    default: "linux/amd64"
+  push:
+    description: Whether to push the image to ECR
+    required: false
+    default: "true"
+  scan-image:
+    description: Whether to run Trivy security scan
+    required: false
+    default: "true"
+  scan-severity:
+    description: Severity levels that cause scan failure (comma-separated)
+    required: false
+    default: "CRITICAL,HIGH"
+  additional-tags:
+    description: Additional tags to apply (comma-separated, e.g. "latest,stable")
+    required: false
+    default: ""
+
+outputs:
+  image-uri:
+    description: Full URI of the pushed image (registry/repo:tag)
+    value: ${{ steps.build-meta.outputs.image-uri }}
+  image-digest:
+    description: SHA256 digest of the pushed image
+    value: ${{ steps.push.outputs.digest }}
+  registry:
+    description: ECR registry URL
+    value: ${{ steps.ecr-login.outputs.registry }}
+
+runs:
+  using: composite
+  steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.aws-role-arn }}
+        aws-region: ${{ inputs.aws-region }}
+        role-session-name: GitHubActions-ECR-${{ inputs.ecr-repository }}
+
+    - name: Login to Amazon ECR
+      id: ecr-login
+      uses: aws-actions/amazon-ecr-login@v2
+      with:
+        mask-password: true
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: |
+          image=moby/buildkit:latest
+          network=host
+
+    - name: Compute image metadata
+      id: build-meta
+      shell: bash
+      run: |
+        REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+        REPO="${{ inputs.ecr-repository }}"
+        TAG="${{ inputs.image-tag }}"
+        IMAGE_URI="${REGISTRY}/${REPO}:${TAG}"
+        echo "image-uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+        echo "registry=${REGISTRY}" >> "$GITHUB_OUTPUT"
+
+        # Build full tags list
+        TAGS="${IMAGE_URI}"
+        if [ -n "${{ inputs.additional-tags }}" ]; then
+          IFS=',' read -ra EXTRA_TAGS <<< "${{ inputs.additional-tags }}"
+          for extra_tag in "${EXTRA_TAGS[@]}"; do
+            TAGS="${TAGS},${REGISTRY}/${REPO}:${extra_tag}"
+          done
+        fi
+        echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      id: build
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfile }}
+        platforms: ${{ inputs.platforms }}
+        tags: ${{ steps.build-meta.outputs.tags }}
+        build-args: ${{ inputs.build-args }}
+        push: false
+        load: true
+        cache-from: |
+          type=gha,scope=${{ inputs.ecr-repository }}
+        cache-to: |
+          type=gha,mode=max,scope=${{ inputs.ecr-repository }}
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          com.mcp-scp.component=${{ inputs.ecr-repository }}
+          com.mcp-scp.build-run=${{ github.run_id }}
+
+    - name: Run Trivy vulnerability scan
+      if: inputs.scan-image == 'true'
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ steps.build-meta.outputs.image-uri }}
+        format: sarif
+        output: trivy-results.sarif
+        severity: ${{ inputs.scan-severity }}
+        exit-code: "1"
+        ignore-unfixed: true
+        vuln-type: "os,library"
+
+    - name: Upload Trivy results to GitHub Security
+      if: inputs.scan-image == 'true' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy-results.sarif
+        category: trivy-${{ inputs.ecr-repository }}
+
+    - name: Push image to ECR
+      if: inputs.push == 'true'
+      id: push
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfile }}
+        platforms: ${{ inputs.platforms }}
+        tags: ${{ steps.build-meta.outputs.tags }}
+        build-args: ${{ inputs.build-args }}
+        push: true
+        cache-from: |
+          type=gha,scope=${{ inputs.ecr-repository }}
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          com.mcp-scp.component=${{ inputs.ecr-repository }}
+          com.mcp-scp.build-run=${{ github.run_id }}
+
+    - name: Print image details
+      shell: bash
+      run: |
+        echo "Image URI: ${{ steps.build-meta.outputs.image-uri }}"
+        if [ -n "${{ steps.push.outputs.digest }}" ]; then
+          echo "Digest: ${{ steps.push.outputs.digest }}"
+        fi

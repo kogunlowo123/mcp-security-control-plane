@@ -1,0 +1,12 @@
+---
+# Token TTL policies per agent tier (in seconds)
+tier_ttls:
+  T0: 3600    # 1 hour  - low-privilege read-only agents
+  T1: 1800    # 30 min  - standard auditor agents
+  T2: 900     # 15 min  - privileged scope-enforcer agents
+
+# Maximum allowed TTL regardless of tier
+max_ttl: 7200
+
+# Refresh buffer: re-issue token when less than this many seconds remain
+refresh_buffer_seconds: 300

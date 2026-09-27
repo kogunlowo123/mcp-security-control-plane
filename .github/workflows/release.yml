@@ -1,0 +1,347 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (e.g. v1.2.3)
+        required: true
+        type: string
+      prerelease:
+        description: Mark as pre-release
+        required: false
+        type: boolean
+        default: false
+      dry-run:
+        description: Dry run (build and tag but do not push or create release)
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: "us-east-1"
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.4.29"
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+  security-events: write
+
+jobs:
+  # ─── Validate Release ────────────────────────────────────────────────────────
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is-prerelease: ${{ steps.version.outputs.is-prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version and release type
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+
+          # Validate semver format
+          if ! echo "$VERSION" | grep -qP '^v\d+\.\d+\.\d+(-rc\.\d+)?$'; then
+            echo "ERROR: Invalid version format: $VERSION"
+            exit 1
+          fi
+
+          IS_PRERELEASE="false"
+          if echo "$VERSION" | grep -q '\-rc\.'; then
+            IS_PRERELEASE="true"
+          fi
+          if [ "${{ inputs.prerelease }}" == "true" ]; then
+            IS_PRERELEASE="true"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "is-prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION}, pre-release: ${IS_PRERELEASE}"
+
+      - name: Verify CHANGELOG entry exists
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSION_NUM="${VERSION#v}"
+          if ! grep -q "## \[${VERSION_NUM}\]" CHANGELOG.md 2>/dev/null; then
+            echo "WARNING: No CHANGELOG.md entry found for ${VERSION_NUM}"
+          fi
+
+  # ─── Run Tests Before Release ────────────────────────────────────────────────
+  pre-release-tests:
+    name: Pre-release Tests
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+          install-dev: "true"
+
+      - name: Run full test suite
+        run: |
+          pytest tests/unit/ tests/integration/ \
+            --cov=. \
+            --cov-report=xml \
+            --cov-fail-under=80 \
+            -v \
+            --timeout=120
+        env:
+          ENVIRONMENT: test
+
+  # ─── Build and Push Images ───────────────────────────────────────────────────
+  build-and-push:
+    name: Build and Push (${{ matrix.service.name }})
+    runs-on: ubuntu-latest
+    needs: [validate, pre-release-tests]
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: api-gateway
+            context: ./services/api-gateway
+            dockerfile: ./services/api-gateway/Dockerfile
+          - name: policy-engine
+            context: ./services/policy-engine
+            dockerfile: ./services/policy-engine/Dockerfile
+          - name: audit-logger
+            context: ./services/audit-logger
+            dockerfile: ./services/audit-logger/Dockerfile
+
+    outputs:
+      api-gateway-digest: ${{ steps.push.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push ${{ matrix.service.name }}
+        id: push
+        uses: ./.github/actions/docker-build-push
+        with:
+          aws-role-arn: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          ecr-repository: mcp-scp/${{ matrix.service.name }}
+          image-tag: ${{ needs.validate.outputs.version }}
+          context: ${{ matrix.service.context }}
+          dockerfile: ${{ matrix.service.dockerfile }}
+          platforms: "linux/amd64,linux/arm64"
+          push: ${{ inputs.dry-run != 'true' }}
+          scan-image: "true"
+          scan-severity: "CRITICAL"
+          additional-tags: ${{ needs.validate.outputs.is-prerelease == 'false' && 'latest' || 'pre-release' }}
+          build-args: |
+            APP_VERSION=${{ needs.validate.outputs.version }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_SHA=${{ github.sha }}
+
+      - name: Sign image with Cosign
+        if: inputs.dry-run != 'true'
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the ECR image
+        if: inputs.dry-run != 'true'
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes \
+            "${{ steps.push.outputs.image-uri }}@${{ steps.push.outputs.digest }}"
+
+  # ─── Generate Release Notes ──────────────────────────────────────────────────
+  generate-notes:
+    name: Generate Release Notes
+    runs-on: ubuntu-latest
+    needs: [validate, build-and-push]
+    outputs:
+      release-notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract CHANGELOG section
+        id: notes
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          VERSION_NUM="${VERSION#v}"
+
+          # Extract section from CHANGELOG.md
+          NOTES=$(awk "/^## \[${VERSION_NUM}\]/{found=1; next} found && /^## \[/{exit} found{print}" CHANGELOG.md 2>/dev/null || echo "")
+
+          if [ -z "$NOTES" ]; then
+            # Fall back to git log since previous tag
+            PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              NOTES=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD")
+            else
+              NOTES=$(git log --pretty=format:"- %s (%h)" HEAD~10..HEAD)
+            fi
+          fi
+
+          # Write to file and set output
+          echo "$NOTES" > release-notes.txt
+          {
+            echo "notes<<EOF"
+            cat release-notes.txt
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload release notes artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-${{ needs.validate.outputs.version }}
+          path: release-notes.txt
+
+  # ─── Create GitHub Release ───────────────────────────────────────────────────
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate, build-and-push, generate-notes]
+    if: inputs.dry-run != 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download release notes artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes-${{ needs.validate.outputs.version }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate.outputs.version }}
+          name: "MCP Security Control Plane ${{ needs.validate.outputs.version }}"
+          body_path: release-notes.txt
+          prerelease: ${{ needs.validate.outputs.is-prerelease == 'true' }}
+          generate_release_notes: false
+          make_latest: ${{ needs.validate.outputs.is-prerelease == 'false' }}
+          files: |
+            release-notes.txt
+
+  # ─── Deploy to Production ────────────────────────────────────────────────────
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [validate, create-release]
+    if: |
+      needs.validate.outputs.is-prerelease == 'false' &&
+      inputs.dry-run != 'true'
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update ECS services with new image
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          REGISTRY="${{ secrets.ECR_REGISTRY }}"
+          SERVICES=("api-gateway" "policy-engine" "audit-logger")
+          CLUSTER="mcp-scp-prod"
+
+          for SERVICE in "${SERVICES[@]}"; do
+            echo "Updating ${SERVICE} to ${VERSION}..."
+
+            # Get current task definition
+            TASK_DEF=$(aws ecs describe-task-definition \
+              --task-definition "mcp-scp-${SERVICE}" \
+              --query 'taskDefinition' \
+              --output json)
+
+            # Update container image in task definition
+            NEW_TASK_DEF=$(echo "$TASK_DEF" | python3 -c "
+          import json, sys
+          td = json.load(sys.stdin)
+          for cd in td['containerDefinitions']:
+              if cd['name'] == '${SERVICE}':
+                  cd['image'] = '${REGISTRY}/mcp-scp/${SERVICE}:${VERSION}'
+          # Remove fields not accepted in register-task-definition
+          for key in ['taskDefinitionArn','revision','status','requiresAttributes',
+                      'compatibilities','registeredAt','registeredBy']:
+              td.pop(key, None)
+          print(json.dumps(td))
+          ")
+
+            # Register new task definition revision
+            NEW_REVISION=$(echo "$NEW_TASK_DEF" | aws ecs register-task-definition \
+              --cli-input-json file:///dev/stdin \
+              --query 'taskDefinition.taskDefinitionArn' \
+              --output text)
+
+            # Update the service
+            aws ecs update-service \
+              --cluster "$CLUSTER" \
+              --service "mcp-scp-${SERVICE}" \
+              --task-definition "$NEW_REVISION" \
+              --force-new-deployment \
+              --deployment-configuration "minimumHealthyPercent=100,maximumPercent=200"
+
+            echo "Updated ${SERVICE} to task definition: ${NEW_REVISION}"
+          done
+
+      - name: Wait for deployments to stabilize
+        run: |
+          SERVICES=("api-gateway" "policy-engine" "audit-logger")
+          CLUSTER="mcp-scp-prod"
+          for SERVICE in "${SERVICES[@]}"; do
+            echo "Waiting for mcp-scp-${SERVICE} to stabilize..."
+            aws ecs wait services-stable \
+              --cluster "$CLUSTER" \
+              --services "mcp-scp-${SERVICE}"
+            echo "mcp-scp-${SERVICE} is stable."
+          done
+
+      - name: Post-deployment smoke tests
+        run: |
+          API_URL="${{ secrets.PROD_API_URL }}"
+          echo "Running smoke tests against ${API_URL}..."
+          curl -f "${API_URL}/health" || exit 1
+          curl -f "${API_URL}/api/v1/status" || exit 1
+          echo "Smoke tests passed."
+
+      - name: Notify release complete
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ job.status }}' === 'success' ? 'succeeded' : 'FAILED';
+            const body = `## Release ${{ needs.validate.outputs.version }} deployment ${status}
+
+            - **Version:** ${{ needs.validate.outputs.version }}
+            - **Environment:** Production
+            - **Deployed by:** @${{ github.actor }}
+            - **Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+
+            github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: '${{ needs.validate.outputs.version }}',
+              body: body,
+              draft: false,
+              prerelease: false
+            }).catch(e => console.log('Release already exists:', e.message));

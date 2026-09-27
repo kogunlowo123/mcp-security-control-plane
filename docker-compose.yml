@@ -1,0 +1,259 @@
+---
+# =============================================================================
+# mcp-security-control-plane — docker-compose.yml
+# Production-like local stack:
+#   api         → FastAPI control-plane service (port 8000)
+#   postgres    → PostgreSQL 16 + pgvector extension (port 5432)
+#   opensearch  → OpenSearch 2.x (port 9200, dashboard 5601)
+#   opa         → Open Policy Agent (port 8181)
+#   redis       → Redis 7 (port 6379)
+# =============================================================================
+version: "3.9"
+
+# =============================================================================
+# Named volumes
+# =============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  opensearch_data:
+    driver: local
+  redis_data:
+    driver: local
+  opa_policies:
+    driver: local
+
+# =============================================================================
+# Shared networks
+# =============================================================================
+networks:
+  control_plane:
+    driver: bridge
+    name: mcp_control_plane
+
+# =============================================================================
+# Services
+# =============================================================================
+services:
+
+  # ---------------------------------------------------------------------------
+  # API — FastAPI control-plane service
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+      target: production
+      args:
+        PYTHON_VERSION: "3.12"
+    image: mcp-security-control-plane/api:${VERSION:-0.1.0}
+    container_name: mcp_api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      # Application
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Database
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-mcp}:${POSTGRES_PASSWORD:-mcp_secret}@postgres:5432/${POSTGRES_DB:-mcp_control_plane}
+      # Search
+      OPENSEARCH_URL: ${OPENSEARCH_URL:-http://opensearch:9200}
+      OPENSEARCH_USERNAME: ${OPENSEARCH_USERNAME:-admin}
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-admin}
+      # Policy engine
+      OPA_URL: ${OPA_URL:-http://opa:8181}
+      # Cache / queue
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # Auth
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_production_min_32_chars!!}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-60}
+      # AWS / Bedrock
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}
+      # Storage
+      S3_BUCKET: ${S3_BUCKET:-mcp-security-artifacts}
+      SQS_QUEUE_URL: ${SQS_QUEUE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - control_plane
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - opa_policies:/app/policies:ro
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 + pgvector
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mcp_postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mcp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mcp_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-mcp_control_plane}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - control_plane
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mcp} -d ${POSTGRES_DB:-mcp_control_plane}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.max=10000"
+      - "-c"
+      - "pg_stat_statements.track=all"
+      - "-c"
+      - "log_statement=ddl"
+      - "-c"
+      - "log_min_duration_statement=1000"
+
+  # ---------------------------------------------------------------------------
+  # OpenSearch 2.x — vector search + log analytics
+  # ---------------------------------------------------------------------------
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    container_name: mcp_opensearch
+    restart: unless-stopped
+    ports:
+      - "${OPENSEARCH_PORT:-9200}:9200"
+      - "9600:9600"   # performance analyzer
+    environment:
+      cluster.name: mcp-search-cluster
+      node.name: mcp-search-node-1
+      discovery.type: single-node
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      DISABLE_SECURITY_PLUGIN: "true"   # override in production
+      plugins.security.disabled: "true"  # override in production
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_PASSWORD:-admin}
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    networks:
+      - control_plane
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -f http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 60s
+
+  # ---------------------------------------------------------------------------
+  # OpenSearch Dashboards (optional, dev only)
+  # ---------------------------------------------------------------------------
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.15.0
+    container_name: mcp_opensearch_dashboards
+    restart: unless-stopped
+    ports:
+      - "${OPENSEARCH_DASHBOARD_PORT:-5601}:5601"
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    networks:
+      - control_plane
+    profiles:
+      - dashboards
+
+  # ---------------------------------------------------------------------------
+  # Open Policy Agent — policy-as-code authorization
+  # ---------------------------------------------------------------------------
+  opa:
+    image: openpolicyagent/opa:0.66.0-rootless
+    container_name: mcp_opa
+    restart: unless-stopped
+    ports:
+      - "${OPA_PORT:-8181}:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-format=json"
+      - "--log-level=${OPA_LOG_LEVEL:-info}"
+      - "--set=decision_logs.console=true"
+      - "--set=status.console=true"
+      - "/policies"
+    volumes:
+      - opa_policies:/policies:ro
+      - ./security/policies:/policies:ro
+    networks:
+      - control_plane
+    healthcheck:
+      test: ["CMD", "opa", "check", "/policies"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 — cache, session store, pub/sub
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: mcp_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "yes"
+      - "--requirepass"
+      - "${REDIS_PASSWORD:-redis_secret}"
+      - "--maxmemory"
+      - "256mb"
+      - "--maxmemory-policy"
+      - "allkeys-lru"
+      - "--save"
+      - "900 1"
+      - "--save"
+      - "300 10"
+      - "--save"
+      - "60 10000"
+    volumes:
+      - redis_data:/data
+    networks:
+      - control_plane
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

@@ -1,0 +1,152 @@
+name: Agent Feature Request
+description: Request a new agent capability, tool integration, or policy control for the MCP Security Control Plane
+title: "[Agent Request]: "
+labels:
+  - agent-request
+  - enhancement
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to request new agent capabilities, tool integrations, policy controls, or changes to how the platform governs AI agent behavior.
+
+        This includes: new MCP tool allowances, new policy enforcement rules, agent identity/permission models, new audit events, or integrations with external systems.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight Checklist
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: I have reviewed the current policy documentation
+          required: true
+        - label: I have considered the security implications of this request
+          required: true
+
+  - type: dropdown
+    id: request_type
+    attributes:
+      label: Request Type
+      description: What type of agent feature are you requesting?
+      multiple: false
+      options:
+        - New MCP tool integration / allowance
+        - New policy control or enforcement rule
+        - Agent identity or permission model change
+        - New audit event or observability capability
+        - Rate limiting or quota change
+        - New external system integration
+        - Agent behavior modification
+        - Platform governance change
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Business Priority
+      options:
+        - "P0 - Blocking production use case"
+        - "P1 - High value, needed within sprint"
+        - "P2 - Medium value, planned for next quarter"
+        - "P3 - Nice to have, no timeline pressure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case Description
+      description: |
+        Describe the agent use case that requires this feature. Be specific about:
+        - What the agent is trying to accomplish
+        - What systems or data it needs access to
+        - Who operates the agent (human user, automated system, etc.)
+      placeholder: |
+        Our compliance agent needs to query the internal policy database to validate
+        tool call parameters against data residency requirements. Currently there is
+        no way to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution
+      description: |
+        Describe your proposed approach. Include:
+        - What new capability or rule should exist
+        - How it should behave
+        - What inputs/outputs are involved
+      placeholder: |
+        Add a new MCP tool `policy.validate_residency` that accepts a resource ARN and
+        returns the permitted data residency zones. The tool should be gated by the
+        `policy:read` permission scope and emit an audit event on each call.
+    validations:
+      required: true
+
+  - type: textarea
+    id: security_considerations
+    attributes:
+      label: Security Considerations
+      description: |
+        What are the security implications of this request?
+        - What data or systems would be exposed?
+        - What could go wrong if this capability is misused?
+        - What guardrails should exist?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: |
+        Define what "done" looks like. Use Given/When/Then format if helpful.
+      placeholder: |
+        - Given an agent with `policy:read` scope, when it calls `policy.validate_residency`,
+          then it receives the permitted zones for that resource.
+        - Given an agent WITHOUT `policy:read` scope, when it calls `policy.validate_residency`,
+          then it receives a 403 and an audit event is emitted.
+        - Rate limit: no more than 100 calls/minute per agent identity.
+    validations:
+      required: true
+
+  - type: textarea
+    id: policy_requirements
+    attributes:
+      label: Policy Requirements
+      description: |
+        What policy definitions, RBAC rules, or governance controls are needed?
+      placeholder: |
+        - New permission scope: `policy:read`
+        - New OPA policy rule: `allow_policy_read` in `authz/policy.rego`
+        - Audit event: `POLICY_READ` with fields: agent_id, resource_arn, result
+
+  - type: dropdown
+    id: breaking_change
+    attributes:
+      label: Breaking Change?
+      description: Would this change break existing agent configurations or policies?
+      options:
+        - "No - fully backward compatible"
+        - "Yes - requires migration for existing agents"
+        - "Unsure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What alternatives did you consider? Why is the proposed solution preferred?
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Links to related issues, architecture diagrams, external references, etc.

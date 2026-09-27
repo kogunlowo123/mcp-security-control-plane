@@ -1,0 +1,52 @@
+# CODEOWNERS — MCP Security Control Plane
+#
+# Each line is a file pattern followed by one or more owners.
+# Owners are matched from the bottom up; the last matching pattern wins.
+#
+# GitHub requires owners to have explicit write access to the repository.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything not matched by a more specific rule
+* @kogunlowo123
+
+# Platform API
+/platform/ @kogunlowo123
+
+# Domain services
+/services/ @kogunlowo123
+
+# Security-critical code — requires explicit sign-off
+/security/ @kogunlowo123
+/services/authorization/ @kogunlowo123
+/services/scope/ @kogunlowo123
+
+# Identity provider integrations
+/identity/ @kogunlowo123
+
+# Infrastructure — requires explicit sign-off before merge
+/infra/ @kogunlowo123
+
+# Deployment scripts and configuration
+/deploy/ @kogunlowo123
+
+# Observability configuration
+/observability/ @kogunlowo123
+
+# Tests
+/tests/ @kogunlowo123
+/evals/ @kogunlowo123
+
+# Documentation
+/docs/ @kogunlowo123
+README.md @kogunlowo123
+SECURITY.md @kogunlowo123
+CONTRIBUTING.md @kogunlowo123
+CHANGELOG.md @kogunlowo123
+
+# CI/CD pipelines
+/.github/ @kogunlowo123
+
+# Dependency manifests — review carefully for supply-chain security
+requirements.txt @kogunlowo123
+requirements-dev.txt @kogunlowo123
+pyproject.toml @kogunlowo123

@@ -1,0 +1,313 @@
+name: Security Scanning
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Run daily at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.4.29"
+
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+  pull-requests: write
+
+jobs:
+  # ─── Trivy Container Scanning ─────────────────────────────────────────────────
+  trivy-scan:
+    name: Trivy Container Scan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - api-gateway
+          - policy-engine
+          - audit-logger
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_CI_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Run Trivy on ECR image (latest)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ steps.ecr-login.outputs.registry }}/mcp-scp/${{ matrix.service }}:latest"
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          severity: "CRITICAL,HIGH,MEDIUM"
+          ignore-unfixed: false
+          vuln-type: "os,library"
+          exit-code: "0"
+        continue-on-error: true
+
+      - name: Upload Trivy SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: trivy-container-${{ matrix.service }}
+
+      - name: Trivy filesystem scan (source)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: ./services/${{ matrix.service }}
+          format: sarif
+          output: trivy-fs-${{ matrix.service }}.sarif
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      - name: Upload filesystem SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs-${{ matrix.service }}.sarif
+          category: trivy-fs-${{ matrix.service }}
+
+  # ─── Bandit SAST ──────────────────────────────────────────────────────────────
+  bandit:
+    name: Bandit SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+          install-dev: "true"
+
+      - name: Run Bandit
+        run: |
+          bandit -r . \
+            -x tests/,".venv/" \
+            -f json \
+            -o bandit-results.json \
+            --severity-level low \
+            --confidence-level low
+        continue-on-error: true
+
+      - name: Convert Bandit to SARIF
+        run: |
+          pip install bandit[sarif] --quiet
+          bandit -r . \
+            -x tests/,".venv/" \
+            -f sarif \
+            -o bandit-results.sarif \
+            --severity-level medium \
+            --confidence-level medium || true
+
+      - name: Upload Bandit SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit-sast
+
+      - name: Fail on HIGH/CRITICAL Bandit findings
+        run: |
+          bandit -r . \
+            -x tests/,".venv/" \
+            --severity-level high \
+            --confidence-level medium \
+            --exit-zero=false
+
+  # ─── Safety / pip-audit Dependency Check ─────────────────────────────────────
+  dependency-check:
+    name: Dependency Vulnerability Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+          install-dev: "true"
+
+      - name: Run pip-audit
+        run: |
+          pip-audit \
+            --format=json \
+            --output=pip-audit-results.json \
+            --desc \
+            --strict
+        continue-on-error: true
+
+      - name: Run Safety check
+        env:
+          SAFETY_API_KEY: ${{ secrets.SAFETY_API_KEY }}
+        run: |
+          safety check \
+            --json \
+            --output safety-results.json \
+            --full-report
+        continue-on-error: true
+
+      - name: Upload dependency scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-scan-results
+          path: |
+            pip-audit-results.json
+            safety-results.json
+          retention-days: 30
+
+      - name: Fail on critical CVEs
+        run: |
+          python3 -c "
+          import json, sys
+          try:
+              with open('pip-audit-results.json') as f:
+                  data = json.load(f)
+              vulns = data.get('dependencies', [])
+              critical = [
+                  v for dep in vulns
+                  for v in dep.get('vulns', [])
+                  if any(s.get('type') == 'CVSS_V3' and float(s.get('score', 0)) >= 9.0
+                         for s in v.get('fix_versions', []))
+              ]
+              if critical:
+                  print(f'CRITICAL CVEs found: {len(critical)}')
+                  sys.exit(1)
+              print('No critical CVEs found.')
+          except Exception as e:
+              print(f'Could not parse audit results: {e}')
+          "
+
+  # ─── CodeQL SAST ─────────────────────────────────────────────────────────────
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["python"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: codeql-${{ matrix.language }}
+          upload: true
+
+  # ─── Secret Scanning ─────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # ─── Infrastructure Scanning ─────────────────────────────────────────────────
+  infra-scan:
+    name: Infrastructure Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Checkov on Terraform
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-tf.sarif
+          soft_fail: false
+          skip_check: CKV_AWS_144,CKV2_AWS_61
+        continue-on-error: true
+
+      - name: Upload Checkov Terraform SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-tf.sarif
+          category: checkov-terraform
+
+      - name: Run Checkov on Dockerfiles
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile
+          output_format: sarif
+          output_file_path: checkov-docker.sarif
+          soft_fail: true
+        continue-on-error: true
+
+      - name: Upload Checkov Dockerfile SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-docker.sarif
+          category: checkov-dockerfile
+
+  # ─── SBOM Generation ─────────────────────────────────────────────────────────
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          uv-version: ${{ env.UV_VERSION }}
+          install-dev: "false"
+
+      - name: Generate Python SBOM with CycloneDX
+        run: |
+          pip install cyclonedx-bom --quiet
+          cyclonedx-py environment \
+            --format json \
+            --output sbom-python.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom-python.json
+          retention-days: 90

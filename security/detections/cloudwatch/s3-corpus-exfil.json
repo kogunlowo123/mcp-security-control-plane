@@ -1,0 +1,30 @@
+{
+  "AlarmName": "mcp-s3-corpus-exfiltration",
+  "AlarmDescription": "Detects abnormally high S3 GetObject calls on the MCP corpus bucket, which may indicate data exfiltration via the RAG interface",
+  "Namespace": "AWS/S3",
+  "MetricName": "NumberOfObjects",
+  "Statistic": "Sum",
+  "Period": 300,
+  "EvaluationPeriods": 1,
+  "DatapointsToAlarm": 1,
+  "Threshold": 500,
+  "ComparisonOperator": "GreaterThanThreshold",
+  "TreatMissingData": "notBreaching",
+  "Dimensions": [
+    {
+      "Name": "BucketName",
+      "Value": "mcp-security-control-plane-ENVIRONMENT-corpus-ACCOUNT_ID"
+    },
+    {
+      "Name": "FilterId",
+      "Value": "GetObjectRequests"
+    }
+  ],
+  "AlarmActions": [
+    "arn:aws:sns:us-east-1:ACCOUNT_ID:mcp-security-alerts"
+  ],
+  "Tags": [
+    { "Key": "Project", "Value": "mcp-security-control-plane" },
+    { "Key": "Severity", "Value": "medium" }
+  ]
+}

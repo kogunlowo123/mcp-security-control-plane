@@ -1,0 +1,34 @@
+title: Mass MCP Document Retrieval Attempt
+id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+status: production
+description: >
+  Detects an abnormally high number of RAG queries from a single agent
+  within a short time window. May indicate data exfiltration via the
+  retrieval interface.
+author: mcp-security-control-plane
+date: 2024/01/01
+modified: 2024/01/01
+references:
+  - https://github.com/kogunlowo123/mcp-security-control-plane
+tags:
+  - attack.collection
+  - attack.T1530
+logsource:
+  category: application
+  product: mcp-security-control-plane
+  service: api
+detection:
+  selection:
+    event_type: "mcp.tool.called"
+    tool_name: "rag_search"
+  timeframe: 5m
+  condition: selection | count(agent_id) by agent_id > 200
+falsepositives:
+  - Bulk compliance report generation by authorized auditor agents
+  - Initial corpus indexing runs
+level: medium
+fields:
+  - agent_id
+  - tool_name
+  - query_count
+  - timestamp

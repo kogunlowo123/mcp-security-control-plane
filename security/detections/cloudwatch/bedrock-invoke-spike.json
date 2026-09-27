@@ -1,0 +1,29 @@
+{
+  "AlarmName": "mcp-bedrock-invoke-spike",
+  "AlarmDescription": "Detects abnormal spike in Bedrock InvokeModel calls that may indicate abuse or data exfiltration",
+  "Namespace": "AWS/Bedrock",
+  "MetricName": "InvokeModelLatency",
+  "Statistic": "SampleCount",
+  "Period": 300,
+  "EvaluationPeriods": 2,
+  "DatapointsToAlarm": 2,
+  "Threshold": 1000,
+  "ComparisonOperator": "GreaterThanThreshold",
+  "TreatMissingData": "notBreaching",
+  "Dimensions": [
+    {
+      "Name": "ModelId",
+      "Value": "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    }
+  ],
+  "AlarmActions": [
+    "arn:aws:sns:us-east-1:ACCOUNT_ID:mcp-security-alerts"
+  ],
+  "OKActions": [
+    "arn:aws:sns:us-east-1:ACCOUNT_ID:mcp-security-alerts"
+  ],
+  "Tags": [
+    { "Key": "Project", "Value": "mcp-security-control-plane" },
+    { "Key": "Severity", "Value": "high" }
+  ]
+}

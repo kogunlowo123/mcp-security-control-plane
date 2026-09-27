@@ -1,0 +1,17 @@
+global:
+  environment: prod
+  awsRegion: us-east-1
+
+api:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: ""
+    tag: "0.1.0"
+
+agentRuntime:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ""
+    tag: "0.1.0"

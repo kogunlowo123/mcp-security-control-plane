@@ -1,0 +1,14 @@
+apiVersion: v2
+name: mcp-agent-runtime
+description: MCP Security Control Plane Agent Runtime
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - mcp
+  - security
+  - agents
+  - langgraph
+maintainers:
+  - name: kogunlowo123
+    url: https://github.com/kogunlowo123

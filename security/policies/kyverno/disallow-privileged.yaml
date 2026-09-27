@@ -1,0 +1,78 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privileged-containers
+  annotations:
+    policies.kyverno.io/title: Disallow Privileged Containers
+    policies.kyverno.io/category: Pod Security Standards (Baseline)
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Privileged mode disables most security mechanisms and must not be
+      allowed. This policy enforces non-root execution and blocks host
+      namespace sharing.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: disallow-privileged
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Privileged containers are not allowed."
+        pattern:
+          spec:
+            containers:
+              - =(securityContext):
+                  =(privileged): "false"
+    - name: disallow-host-network
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Host network access is not allowed."
+        pattern:
+          spec:
+            =(hostNetwork): "false"
+    - name: disallow-host-pid
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Host PID access is not allowed."
+        pattern:
+          spec:
+            =(hostPID): "false"
+    - name: disallow-host-ipc
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Host IPC access is not allowed."
+        pattern:
+          spec:
+            =(hostIPC): "false"
+    - name: require-non-root
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        message: "Containers must not run as root."
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+            containers:
+              - securityContext:
+                  runAsNonRoot: true
+                  allowPrivilegeEscalation: false

@@ -1,0 +1,25 @@
+---
+gateway:
+  port: 9000
+  host: "0.0.0.0"
+  read_timeout_seconds: 30
+  write_timeout_seconds: 30
+  max_request_size_bytes: 1048576  # 1MB
+
+authorization:
+  opa_url: "${OPA_URL}"
+  api_url: "${API_INTERNAL_URL}"
+  timeout_seconds: 5
+  fail_closed: true  # Deny if OPA is unreachable
+
+budget:
+  default_max_tokens_per_hour: 100000
+  window_seconds: 3600
+
+audit:
+  enabled: true
+  log_format: "json"
+
+observability:
+  otel_endpoint: "${OTEL_EXPORTER_OTLP_ENDPOINT}"
+  service_name: "mcp-gateway"

@@ -1,0 +1,115 @@
+name: Setup Terraform
+description: >
+  Composite action to set up Terraform 1.8, configure AWS credentials,
+  initialize the backend, and validate the configuration.
+
+inputs:
+  terraform-version:
+    description: Terraform version to install
+    required: false
+    default: "1.8.5"
+  working-directory:
+    description: Directory containing Terraform configuration
+    required: false
+    default: "./infra"
+  environment:
+    description: Target environment (dev / staging / prod)
+    required: true
+  aws-role-arn:
+    description: IAM role ARN to assume for AWS operations
+    required: true
+  aws-region:
+    description: AWS region for backend and provider
+    required: false
+    default: "us-east-1"
+  backend-bucket:
+    description: S3 bucket name for Terraform state
+    required: true
+  backend-dynamodb-table:
+    description: DynamoDB table name for state locking
+    required: true
+  run-init:
+    description: Whether to run terraform init
+    required: false
+    default: "true"
+  run-validate:
+    description: Whether to run terraform validate
+    required: false
+    default: "true"
+
+outputs:
+  terraform-version:
+    description: The Terraform version that was installed
+    value: ${{ steps.setup-tf.outputs.terraform_version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Terraform ${{ inputs.terraform-version }}
+      id: setup-tf
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        terraform_wrapper: true
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.aws-role-arn }}
+        aws-region: ${{ inputs.aws-region }}
+        role-session-name: GitHubActions-Terraform-${{ inputs.environment }}
+        role-duration-seconds: 3600
+
+    - name: Cache Terraform plugin directory
+      uses: actions/cache@v4
+      with:
+        path: ~/.terraform.d/plugin-cache
+        key: terraform-plugins-${{ runner.os }}-${{ hashFiles(format('{0}/.terraform.lock.hcl', inputs.working-directory)) }}
+        restore-keys: |
+          terraform-plugins-${{ runner.os }}-
+
+    - name: Create plugin cache directory
+      shell: bash
+      run: mkdir -p ~/.terraform.d/plugin-cache
+
+    - name: Configure Terraform plugin cache
+      shell: bash
+      run: |
+        cat > ~/.terraformrc << 'EOF'
+        plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"
+        disable_checkpoint = true
+        EOF
+
+    - name: Terraform Init
+      if: inputs.run-init == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TF_INPUT: "false"
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ inputs.backend-bucket }}" \
+          -backend-config="key=${{ inputs.environment }}/terraform.tfstate" \
+          -backend-config="region=${{ inputs.aws-region }}" \
+          -backend-config="dynamodb_table=${{ inputs.backend-dynamodb-table }}" \
+          -backend-config="encrypt=true" \
+          -reconfigure
+
+    - name: Terraform Format Check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        terraform fmt -check -recursive
+
+    - name: Terraform Validate
+      if: inputs.run-validate == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        TF_INPUT: "false"
+      run: |
+        terraform validate
+
+    - name: Print Terraform version
+      shell: bash
+      run: terraform version

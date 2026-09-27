@@ -1,0 +1,92 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: "mcp-api"
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["api:8000"]
+          metrics_path: "/metrics"
+
+processors:
+  batch:
+    send_batch_size: 1000
+    timeout: 10s
+    send_batch_max_size: 2000
+
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 1500
+    spike_limit_mib: 512
+
+  resource:
+    attributes:
+      - key: service.name
+        value: "mcp-security-control-plane"
+        action: upsert
+      - key: deployment.environment
+        from_attribute: ENVIRONMENT
+        action: insert
+
+  # PII scrubbing: redact sensitive fields from spans
+  transform/pii_scrub:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - replace_pattern(attributes["http.request.header.authorization"], "Bearer \\S+", "Bearer [REDACTED]")
+          - replace_pattern(attributes["tool.parameters"], "\"password\":\\s*\"[^\"]+\"", "\"password\": \"[REDACTED]\"")
+
+exporters:
+  awsxray:
+    region: "${AWS_REGION}"
+    indexed_attributes:
+      - agent_id
+      - tool_name
+      - decision
+      - trace_id
+
+  awscloudwatchlogs:
+    region: "${AWS_REGION}"
+    log_group_name: "/mcp-security-control-plane/traces"
+    log_stream_name: "${HOSTNAME}"
+
+  otlp/debug:
+    endpoint: "localhost:4317"
+    tls:
+      insecure: true
+
+  logging:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/pii_scrub, batch, resource]
+      exporters: [awsxray]
+
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, batch, resource]
+      exporters: [awscloudwatchlogs]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/pii_scrub, batch, resource]
+      exporters: [awscloudwatchlogs]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888

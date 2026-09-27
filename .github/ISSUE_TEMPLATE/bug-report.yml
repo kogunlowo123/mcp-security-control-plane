@@ -1,0 +1,138 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in the MCP Security Control Plane
+title: "[Bug]: "
+labels:
+  - bug
+  - triage
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please fill out the sections below as completely as possible to help us reproduce and fix the issue.
+
+        **Security note:** If this bug has security implications (data exposure, authentication bypass, privilege escalation), please use the [Security Finding](?template=security-finding.yml) template instead.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight Checklist
+      description: Please verify these before submitting
+      options:
+        - label: I have searched existing issues and this is not a duplicate
+          required: true
+        - label: This is NOT a security vulnerability (use the Security Finding template for those)
+          required: true
+        - label: I am using a supported version of the platform
+          required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which component of the control plane is affected?
+      multiple: true
+      options:
+        - API Gateway
+        - Policy Engine
+        - Audit Logger
+        - Identity / AuthN
+        - Agent Registry
+        - Tool Proxy
+        - Observability Stack
+        - Infrastructure / Terraform
+        - CI/CD Pipeline
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severely does this affect your workflow?
+      options:
+        - "Critical - Platform is unusable or data loss occurring"
+        - "High - Major feature broken, no workaround"
+        - "Medium - Feature partially broken, workaround exists"
+        - "Low - Minor issue, cosmetic or edge case"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: "When I do X, Y happens instead of Z..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Provide minimal steps to reproduce the bug
+      placeholder: |
+        1. Configure policy with `...`
+        2. Send MCP tool call with payload `...`
+        3. Observe response `...`
+        4. Expected: `...`, Got: `...`
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include any error messages or stack traces.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Provide details about your environment
+      value: |
+        - Platform version:
+        - Python version:
+        - Deployment type (Docker / K8s / bare metal):
+        - Cloud provider (AWS / GCP / Azure / on-prem):
+        - OS:
+        - MCP client version:
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: |
+        Paste any relevant log output. Please redact any sensitive information (tokens, keys, PII).
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant Configuration
+      description: |
+        Paste any relevant configuration (policies, environment variables). Redact secrets.
+      render: yaml
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or information that might be helpful.

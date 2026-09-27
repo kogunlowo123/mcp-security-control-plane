@@ -1,0 +1,45 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-signed-images
+  annotations:
+    policies.kyverno.io/title: Require Signed Images
+    policies.kyverno.io/category: Software Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Requires all container images to be signed with cosign before
+      they can be deployed. This enforces supply chain security by
+      ensuring only trusted, verified images are run.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: verify-image-signature
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchExpressions:
+                  - key: kubernetes.io/metadata.name
+                    operator: NotIn
+                    values:
+                      - kube-system
+                      - kube-public
+                      - kube-node-lease
+      verifyImages:
+        - imageReferences:
+            - "*.dkr.ecr.*.amazonaws.com/*"
+          attestors:
+            - count: 1
+              entries:
+                - keys:
+                    publicKeys: |-
+                      -----BEGIN PUBLIC KEY-----
+                      # Replace with actual cosign public key
+                      -----END PUBLIC KEY-----
+                    signatureAlgorithm: sha256
+          mutateDigest: true
+          verifyDigest: true
+          required: true

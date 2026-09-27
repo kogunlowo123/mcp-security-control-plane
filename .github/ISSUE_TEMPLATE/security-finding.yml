@@ -1,0 +1,184 @@
+name: Security Finding
+description: Report a security vulnerability, misconfiguration, or risk in the MCP Security Control Plane
+title: "[Security]: "
+labels:
+  - security
+  - triage
+assignees:
+  - security-team
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Security Finding Report
+
+        **IMPORTANT:** For critical vulnerabilities involving active exploitation or data breach, please contact the security team directly at security@your-org.com rather than (or in addition to) filing this issue.
+
+        This template is for security vulnerabilities, misconfigurations, and security risks discovered in the MCP Security Control Plane. All fields marked as required must be completed.
+
+        Issues created with this template are automatically assigned to the security team and treated as confidential.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight Checklist
+      options:
+        - label: I have NOT included exploit code, sensitive credentials, or live vulnerability details in fields that will be publicly visible
+          required: true
+        - label: I have already notified the security team via secure channel if this is actively exploited
+          required: false
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity (CVSS v3)
+      description: Estimate the severity using CVSS v3 scoring
+      options:
+        - "Critical (CVSS 9.0–10.0) - Remote code execution, complete system compromise"
+        - "High (CVSS 7.0–8.9) - Significant privilege escalation, data breach"
+        - "Medium (CVSS 4.0–6.9) - Limited privilege escalation, partial data exposure"
+        - "Low (CVSS 0.1–3.9) - Minimal impact, requires significant preconditions"
+        - "Informational - Hardening improvement, defense-in-depth"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: finding_type
+    attributes:
+      label: Finding Type
+      multiple: true
+      options:
+        - Authentication / Authorization bypass
+        - Injection (prompt injection, SQL, command)
+        - Sensitive data exposure / PII leak
+        - Insecure direct object reference (IDOR)
+        - Broken access control
+        - Security misconfiguration
+        - Vulnerable dependency (CVE)
+        - Cryptographic weakness
+        - Rate limiting / DoS
+        - Agent identity spoofing
+        - Tool call policy bypass
+        - Audit log tampering / evasion
+        - Supply chain risk
+        - Infrastructure misconfiguration
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected_component
+    attributes:
+      label: Affected Component
+      multiple: true
+      options:
+        - API Gateway
+        - Policy Engine / OPA
+        - Audit Logger
+        - Identity / AuthN (JWT, OAuth)
+        - Agent Registry
+        - Tool Proxy / MCP Interface
+        - Observability Stack
+        - Infrastructure / Terraform
+        - CI/CD Pipeline
+        - Container Images
+        - Dependencies
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Finding Description
+      description: |
+        Describe the security finding. Be specific but avoid including actual exploit code
+        or sensitive credentials in this public field. Reference "the payload" or "the token"
+        rather than including actual values.
+      placeholder: |
+        The policy engine does not validate the `agent_id` claim in JWT tokens before
+        applying RBAC rules. An attacker who can forge or replay a token with an
+        arbitrary `agent_id` can escalate privileges to any agent's permission set.
+    validations:
+      required: true
+
+  - type: textarea
+    id: attack_scenario
+    attributes:
+      label: Attack Scenario / Impact
+      description: |
+        Describe a realistic attack scenario and the potential impact.
+        Who could exploit this? What could they achieve?
+      placeholder: |
+        An authenticated agent with `tools:read` scope could craft a token with a
+        different agent's identity and call `tools:execute` endpoints. Impact: full
+        privilege escalation for any authenticated agent. No admin interaction required.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: |
+        Provide steps to reproduce in a test environment. Do NOT include actual credentials
+        or working exploit payloads — describe the approach.
+      placeholder: |
+        1. Obtain a valid JWT for agent A (limited scope)
+        2. Decode the token and modify the `agent_id` claim
+        3. Re-sign with any key (signature validation is absent)
+        4. Call `POST /api/v1/tools/execute` with the forged token
+        5. Observe that the request succeeds with agent B's permissions
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected_versions
+    attributes:
+      label: Affected Versions / Environments
+      description: Which versions or environments are affected?
+      placeholder: |
+        - All versions >= 1.0.0
+        - All deployment environments (dev, staging, prod)
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_fix
+    attributes:
+      label: Proposed Remediation
+      description: |
+        Suggest a fix if you have one. Include defense-in-depth measures.
+      placeholder: |
+        1. Implement JWT signature validation using the trusted JWKS endpoint
+        2. Add `agent_id` binding to the token's `sub` claim
+        3. Validate `sub` == `agent_id` in the policy engine middleware
+        4. Add integration test covering forged token rejection
+
+  - type: dropdown
+    id: exploit_available
+    attributes:
+      label: Is a working exploit available?
+      options:
+        - "No"
+        - "Yes - proof of concept only (shared via secure channel)"
+        - "Yes - actively exploited (contact security team immediately)"
+        - "Unknown"
+    validations:
+      required: true
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: CVE numbers, CWE identifiers, related advisories, research papers
+      placeholder: |
+        - CWE-347: Improper Verification of Cryptographic Signature
+        - OWASP API Security Top 10: API2 - Broken Authentication
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other information relevant to this finding.

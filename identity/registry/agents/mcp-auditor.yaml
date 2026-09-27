@@ -1,0 +1,24 @@
+---
+agent_id: mcp-auditor-001
+name: MCP Security Auditor
+tier: T1
+description: >
+  Audits MCP tool call logs for compliance violations, anomalous patterns,
+  and security risks. Generates compliance reports grounded in retrieved
+  security policies.
+tool_grants:
+  - rag_search
+  - mcp_audit_query
+  - tool_catalog
+issuer: mcp-security-control-plane
+is_active: true
+created_at: "2024-01-01T00:00:00Z"
+expires_at: null
+metadata:
+  model_id: anthropic.claude-3-5-sonnet-20241022-v2:0
+  max_tokens: 8192
+  system_prompt: >
+    You are an MCP security auditor. Your role is to analyze tool call logs
+    for compliance violations, anomalous patterns, and security risks.
+    Ground all findings in retrieved security policies. Always cite your
+    sources using the document metadata provided.

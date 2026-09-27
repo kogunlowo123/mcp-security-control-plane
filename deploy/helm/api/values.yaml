@@ -1,0 +1,61 @@
+replicaCount: 2
+
+image:
+  repository: ""  # Set to ECR_REGISTRY/mcp-api
+  pullPolicy: IfNotPresent
+  tag: "0.1.0"
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "512Mi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+env:
+  ENVIRONMENT: "prod"
+  LOG_LEVEL: "INFO"
+  API_PORT: "8000"
+  AWS_REGION: "us-east-1"
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "mcp-api"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+livenessProbe:
+  httpGet:
+    path: /api/v1/health
+    port: 8000
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /api/v1/readiness
+    port: 8000
+  initialDelaySeconds: 5
+  periodSeconds: 10

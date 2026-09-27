@@ -1,0 +1,137 @@
+---
+# =============================================================================
+# docker-compose.override.example.yml
+#
+# Copy this file to docker-compose.override.yml (which is git-ignored) and
+# customise for your local development environment.
+#
+# docker-compose.override.yml is automatically merged by `docker compose`
+# when present — no extra flags required.
+#
+# NEVER commit docker-compose.override.yml; it is in .gitignore.
+# =============================================================================
+version: "3.9"
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # API — mount source code for hot-reload during local development
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      target: development        # use the dev stage of the multi-stage Dockerfile
+    image: mcp-security-control-plane/api:dev
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: DEBUG
+      # Override JWT secret for local dev (never share real secrets)
+      JWT_SECRET: local_dev_secret_not_for_production_1234
+      # Use local Redis without password for simpler dev setup
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      # Live-reload: mount entire source tree into the container
+      - .:/app:cached
+      # Preserve the container's installed packages (avoid overwriting them)
+      - /app/.venv
+    command:
+      - "uvicorn"
+      - "services.api.main:app"
+      - "--host=0.0.0.0"
+      - "--port=8000"
+      - "--reload"
+      - "--reload-dir=/app/services"
+      - "--reload-dir=/app/platform"
+      - "--reload-dir=/app/security"
+    # Remove the production healthcheck so docker compose doesn't
+    # wait for it on every code change restart
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — expose a named port alias and lower resource limits
+  # ---------------------------------------------------------------------------
+  postgres:
+    ports:
+      - "5432:5432"
+    environment:
+      # Allow schema exploration with psql from the host:
+      # psql postgresql://mcp:mcp_secret@localhost:5432/mcp_control_plane
+      POSTGRES_USER: mcp
+      POSTGRES_PASSWORD: mcp_secret
+      POSTGRES_DB: mcp_control_plane
+
+  # ---------------------------------------------------------------------------
+  # OpenSearch — single-node, reduced heap for laptop development
+  # ---------------------------------------------------------------------------
+  opensearch:
+    environment:
+      OPENSEARCH_JAVA_OPTS: "-Xms256m -Xmx256m"   # reduce memory on dev machines
+
+  # ---------------------------------------------------------------------------
+  # OpenSearch Dashboards — enable locally (disabled via profile in base file)
+  # ---------------------------------------------------------------------------
+  opensearch-dashboards:
+    profiles: []   # remove the "dashboards" profile to always start this service
+
+  # ---------------------------------------------------------------------------
+  # Redis — disable persistence and password for simpler local dev
+  # ---------------------------------------------------------------------------
+  redis:
+    command:
+      - "redis-server"
+      - "--appendonly"
+      - "no"
+      - "--save"
+      - ""
+
+  # ---------------------------------------------------------------------------
+  # LocalStack — emulate AWS services (S3, SQS, Bedrock) without a real account
+  # ---------------------------------------------------------------------------
+  localstack:
+    image: localstack/localstack:3.5
+    container_name: mcp_localstack
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: s3,sqs,secretsmanager,iam
+      DEBUG: "1"
+      PERSISTENCE: "0"
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./infra/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+    networks:
+      - control_plane
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # PgAdmin — optional GUI for Postgres inspection
+  # ---------------------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:8.9
+    container_name: mcp_pgadmin
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: dev@localhost.local
+      PGADMIN_DEFAULT_PASSWORD: pgadmin_local_only
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    networks:
+      - control_plane
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - pgadmin

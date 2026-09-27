@@ -1,0 +1,18 @@
+apiVersion: v2
+name: mcp-security-control-plane
+description: MCP Security Control Plane - umbrella chart
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: mcp-api
+    version: "0.1.0"
+    repository: "file://../api"
+    condition: api.enabled
+  - name: mcp-agent-runtime
+    version: "0.1.0"
+    repository: "file://../agent-runtime"
+    condition: agentRuntime.enabled
+maintainers:
+  - name: kogunlowo123
+    url: https://github.com/kogunlowo123

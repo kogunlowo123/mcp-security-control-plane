@@ -1,0 +1,92 @@
+name: Setup Python with uv
+description: >
+  Composite action to set up Python 3.12 with the uv package manager,
+  restore the virtual environment from cache, and install project dependencies.
+
+inputs:
+  python-version:
+    description: Python version to install
+    required: false
+    default: "3.12"
+  working-directory:
+    description: Directory containing pyproject.toml / requirements files
+    required: false
+    default: "."
+  install-dev:
+    description: Whether to install dev/test dependencies
+    required: false
+    default: "true"
+  uv-version:
+    description: Version of uv to install
+    required: false
+    default: "0.4.29"
+
+outputs:
+  python-version:
+    description: The resolved Python version that was installed
+    value: ${{ steps.setup-python.outputs.python-version }}
+  cache-hit:
+    description: Whether the virtualenv cache was restored
+    value: ${{ steps.cache-venv.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: ${{ inputs.uv-version }}
+        enable-cache: true
+        cache-dependency-glob: |
+          ${{ inputs.working-directory }}/pyproject.toml
+          ${{ inputs.working-directory }}/requirements*.txt
+          ${{ inputs.working-directory }}/uv.lock
+
+    - name: Set up Python ${{ inputs.python-version }}
+      id: setup-python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Compute cache key
+      id: cache-key
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        HASH=$(cat pyproject.toml uv.lock 2>/dev/null | sha256sum | cut -d' ' -f1)
+        echo "hash=${HASH}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore virtualenv cache
+      id: cache-venv
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.working-directory }}/.venv
+        key: venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ steps.cache-key.outputs.hash }}
+        restore-keys: |
+          venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-
+
+    - name: Install dependencies (with dev extras)
+      if: inputs.install-dev == 'true' && steps.cache-venv.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        uv sync --extra dev --frozen
+
+    - name: Install dependencies (production only)
+      if: inputs.install-dev == 'false' && steps.cache-venv.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        uv sync --frozen
+
+    - name: Add .venv/bin to PATH
+      shell: bash
+      run: |
+        echo "${{ inputs.working-directory }}/.venv/bin" >> "$GITHUB_PATH"
+
+    - name: Verify installation
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        python --version
+        uv pip list | head -20

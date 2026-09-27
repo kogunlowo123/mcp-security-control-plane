@@ -1,0 +1,156 @@
+---
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+minimum_pre_commit_version: "3.0.0"
+default_stages: [commit, push]
+
+repos:
+  # ===========================================================================
+  # General / Common hooks
+  # ===========================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: no-commit-to-branch
+        args: [--branch=main, --branch=master, --branch=production]
+
+  # ===========================================================================
+  # Ruff — fast Python linter and import sorter
+  # ===========================================================================
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.0
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        args:
+          - --fix
+          - --exit-non-zero-on-fix
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: ruff (format check)
+        types_or: [python, pyi]
+
+  # ===========================================================================
+  # Black — Python code formatter
+  # ===========================================================================
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        name: black
+        language_version: python3
+        args: [--line-length=120]
+        types_or: [python, pyi]
+
+  # ===========================================================================
+  # Mypy — static type checker for Python
+  # ===========================================================================
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.1
+    hooks:
+      - id: mypy
+        name: mypy
+        args:
+          - --strict
+          - --ignore-missing-imports
+          - --no-error-summary
+        additional_dependencies:
+          - types-requests
+          - types-redis
+          - types-PyYAML
+          - pydantic>=2.0
+        types_or: [python, pyi]
+        exclude: ^(tests/|docs/|scripts/)
+
+  # ===========================================================================
+  # Terraform — format and validate
+  # ===========================================================================
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.92.0
+    hooks:
+      - id: terraform_fmt
+        name: terraform fmt
+        args:
+          - --args=-recursive
+      - id: terraform_validate
+        name: terraform validate
+        args:
+          - --args=-no-color
+        exclude: ^infra/modules/
+
+  # ===========================================================================
+  # detect-secrets — prevent accidental secret commits
+  # ===========================================================================
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets
+        args:
+          - --baseline
+          - .secrets.baseline
+          - --exclude-files
+          - "*.lock"
+          - --exclude-files
+          - ".env.example"
+        exclude: >
+          (?x)^(
+            \.secrets\.baseline$|
+            .*\.lock$|
+            .*\.tfstate$
+          )$
+
+  # ===========================================================================
+  # Dockerfile linter
+  # ===========================================================================
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        name: hadolint (Dockerfile lint)
+        args:
+          - --ignore=DL3008
+          - --ignore=DL3013
+          - --ignore=DL3042
+
+  # ===========================================================================
+  # YAML linter
+  # ===========================================================================
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        name: yamllint
+        args:
+          - --strict
+          - -d
+          - |
+            extends: default
+            rules:
+              line-length:
+                max: 140
+              truthy:
+                allowed-values: ['true', 'false', 'yes', 'no']
+              comments:
+                min-spaces-from-content: 1
+        exclude: >
+          (?x)^(
+            \.github/.*|
+            infra/.*
+          )$

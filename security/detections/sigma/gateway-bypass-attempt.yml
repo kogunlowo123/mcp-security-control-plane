@@ -1,0 +1,42 @@
+title: MCP Gateway Bypass Attempt
+id: f3c2a1b0-9e8d-4f7c-6b5a-4d3e2f1a0b9c
+status: production
+description: >
+  Detects direct calls to MCP backend services that bypass the security
+  gateway. Indicates a potential attempt to circumvent authorization controls.
+author: mcp-security-control-plane
+date: 2024/01/01
+modified: 2024/01/01
+references:
+  - https://github.com/kogunlowo123/mcp-security-control-plane
+tags:
+  - attack.defense_evasion
+  - attack.T1562.001
+logsource:
+  category: network
+  product: aws
+  service: vpc_flow_logs
+detection:
+  selection:
+    dst_port:
+      - 8000
+      - 8080
+      - 5432
+      - 9200
+    src_ip|startswith:
+      - "10."
+      - "172.16."
+      - "192.168."
+  filter_gateway:
+    src_ip|contains:
+      - "gateway"
+  condition: selection and not filter_gateway
+falsepositives:
+  - Legitimate internal service-to-service calls during testing
+  - Kubernetes health probes from node IPs
+level: high
+fields:
+  - src_ip
+  - dst_ip
+  - dst_port
+  - protocol

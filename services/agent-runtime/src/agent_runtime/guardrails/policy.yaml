@@ -1,0 +1,113 @@
+# Guardrail Policies for MCP Security Control Plane Agent Runtime
+# Defines input/output screening rules applied to all agent interactions.
+
+version: "1.0.0"
+
+# ── Blocked topics ────────────────────────────────────────────────────────────
+# These topic patterns trigger an immediate BLOCK on agent input or output.
+blocked_topics:
+  - name: credential_extraction
+    patterns:
+      - "extract.*password"
+      - "dump.*credentials"
+      - "exfiltrate.*secret"
+      - "retrieve.*api.?key"
+      - "steal.*token"
+    severity: CRITICAL
+    action: BLOCK
+
+  - name: privilege_escalation
+    patterns:
+      - "bypass.*auth"
+      - "escalate.*privilege"
+      - "grant.*admin"
+      - "override.*permission"
+      - "disable.*guardrail"
+      - "ignore.*policy"
+      - "jailbreak"
+      - "ignore previous instructions"
+    severity: CRITICAL
+    action: BLOCK
+
+  - name: data_exfiltration
+    patterns:
+      - "send.*external"
+      - "upload.*s3.*public"
+      - "exfiltrate"
+      - "leak.*data"
+    severity: HIGH
+    action: BLOCK
+
+  - name: prompt_injection
+    patterns:
+      - "\\[INST\\]"
+      - "<\\|system\\|>"
+      - "###SYSTEM###"
+      - "IGNORE ALL PREVIOUS"
+      - "You are now"
+      - "Pretend you are"
+    severity: CRITICAL
+    action: BLOCK
+
+# ── PII detection ─────────────────────────────────────────────────────────────
+pii_detection:
+  enabled: true
+  action_on_detection: REDACT
+  # Redact matched spans, do not block (compliance logs may legitimately contain PII)
+  patterns:
+    ssn:
+      regex: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      label: "[REDACTED_SSN]"
+    credit_card:
+      regex: "\\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\\b"
+      label: "[REDACTED_CC]"
+    email:
+      regex: "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b"
+      label: "[REDACTED_EMAIL]"
+    phone_us:
+      regex: "\\b(?:\\+?1[-.])?\\(?[0-9]{3}\\)?[-.]?[0-9]{3}[-.]?[0-9]{4}\\b"
+      label: "[REDACTED_PHONE]"
+    aws_access_key:
+      regex: "(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}"
+      label: "[REDACTED_AWS_KEY]"
+    generic_secret:
+      regex: "(?:password|passwd|secret|token|key)\\s*[:=]\\s*['\"]?[\\S]{8,}"
+      label: "[REDACTED_SECRET]"
+      flags: IGNORECASE
+
+# ── Output length limits ──────────────────────────────────────────────────────
+max_output_length:
+  characters: 32000
+  tokens: 8192
+  action: TRUNCATE  # Truncate rather than block; preserve citation appendix
+
+# ── Grounding requirements ────────────────────────────────────────────────────
+grounding:
+  required: true
+  # Minimum fraction of sentences in LLM output that must cite retrieved docs
+  min_citation_fraction: 0.25
+  # Action if grounding check fails
+  action_on_failure: WARN
+  # For compliance reports specifically, require at least N citations
+  compliance_report_min_citations: 3
+
+# ── Citation validation ───────────────────────────────────────────────────────
+citation_validation:
+  enabled: true
+  # Citations must reference documents actually in the retrieved_docs list
+  require_grounded_citations: true
+  # Reject hallucinated / fabricated document references
+  action_on_hallucinated_citation: BLOCK
+
+# ── Rate limiting ─────────────────────────────────────────────────────────────
+rate_limits:
+  max_calls_per_minute_per_agent: 10
+  max_calls_per_hour_per_session: 100
+  action: THROTTLE
+
+# ── Audit logging ─────────────────────────────────────────────────────────────
+audit_logging:
+  log_all_inputs: true
+  log_all_outputs: true
+  log_violations: true
+  retention_days: 365

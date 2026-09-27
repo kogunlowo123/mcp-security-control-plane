@@ -1,0 +1,24 @@
+---
+routes:
+  - path: "/mcp/tools/{tool_name}/call"
+    method: POST
+    upstream: api
+    authorization_required: true
+    rate_limit:
+      requests_per_minute: 100
+
+  - path: "/mcp/tools"
+    method: GET
+    upstream: api
+    authorization_required: true
+
+  - path: "/health"
+    method: GET
+    upstream: api
+    authorization_required: false
+
+upstreams:
+  api:
+    url: "${API_INTERNAL_URL}"
+    timeout_seconds: 30
+    health_check: "/api/v1/health"

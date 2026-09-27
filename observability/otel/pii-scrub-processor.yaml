@@ -1,0 +1,22 @@
+# PII scrubbing processor configuration for OpenTelemetry Collector
+# This configuration defines regex-based attribute scrubbing rules
+
+processors:
+  transform/pii_scrub:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          # Redact JWT tokens in Authorization headers
+          - replace_pattern(attributes["http.request.header.authorization"], "Bearer [A-Za-z0-9+/=._-]+", "Bearer [REDACTED]")
+          # Redact passwords in tool parameters
+          - replace_pattern(attributes["tool.parameters"], "\"password\":\\s*\"[^\"]+\"", "\"password\":\"[REDACTED]\"")
+          # Redact email addresses
+          - replace_pattern(attributes["user.email"], "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}", "[EMAIL_REDACTED]")
+          # Redact AWS secret keys
+          - replace_pattern(attributes["aws.secret_access_key"], "[A-Za-z0-9/+=]{40}", "[AWS_SECRET_REDACTED]")
+    log_statements:
+      - context: log
+        statements:
+          - replace_pattern(body, "Bearer [A-Za-z0-9+/=._-]+", "Bearer [REDACTED]")
+          - replace_pattern(body, "\"password\":\\s*\"[^\"]+\"", "\"password\":\"[REDACTED]\"")

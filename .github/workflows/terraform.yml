@@ -118,7 +118,7 @@ jobs:
         continue-on-error: true
 
       - name: Save plan artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tfplan-dev-${{ github.sha }}
           path: ./infra/environments/dev/tfplan
@@ -225,7 +225,7 @@ jobs:
         continue-on-error: true
 
       - name: Save plan artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tfplan-staging-${{ github.sha }}
           path: ./infra/environments/staging/tfplan
@@ -305,7 +305,7 @@ jobs:
         continue-on-error: true
 
       - name: Save plan artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tfplan-prod-${{ github.sha }}
           path: ./infra/environments/prod/tfplan

@@ -85,7 +85,7 @@ jobs:
             -v
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         if: matrix.python-version == env.PYTHON_VERSION
         with:
           files: coverage.xml
@@ -153,7 +153,7 @@ jobs:
             --timeout=120
 
       - name: Upload integration coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: coverage-integration.xml
           flags: integration

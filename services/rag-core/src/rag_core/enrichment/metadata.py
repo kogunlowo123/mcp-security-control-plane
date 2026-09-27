@@ -1,39 +1,82 @@
-"""Metadata enricher for ingested documents."""
+"""MetadataEnricher — adds standard provenance fields to documents."""
 
 from __future__ import annotations
 
-import hashlib
-import time
-from typing import Any
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from langchain_core.documents import Document
+
+_EXT_TO_TYPE: dict = {
+    ".pdf": "pdf",
+    ".html": "html",
+    ".htm": "html",
+    ".txt": "text",
+    ".md": "markdown",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".csv": "csv",
+    ".xml": "xml",
+}
+
+_INGESTION_VERSION = "1.0"
 
 
 class MetadataEnricher:
-    """Adds standard metadata fields to documents before storing."""
+    """Adds ``source``, ``created_at``, ``doc_type``, and ``ingestion_version``
+    to a document's metadata.
+
+    Fields already present in the document's metadata are **never overwritten**
+    so that values set by a loader take precedence.
+
+    Usage::
+
+        enricher = MetadataEnricher()
+        doc = enricher.enrich(doc, source="s3://bucket/policy.pdf")
+    """
 
     def enrich(
         self,
-        content: str,
-        source_url: str = "",
-        doc_type: str = "text",
-        extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Build a metadata dict for a document chunk.
+        doc: Document,
+        source: Optional[str] = None,
+        doc_type: Optional[str] = None,
+    ) -> Document:
+        """Return a new Document with enriched metadata.
 
         Args:
-            content: Document text content.
-            source_url: Origin URL or S3 path.
-            doc_type: Document type (pdf, html, text, policy, etc.).
-            extra: Additional key-value metadata to merge.
+            doc:      Input document.
+            source:   Source identifier (file path, S3 key, URL).  Only
+                      applied when ``metadata["source"]`` is absent.
+            doc_type: Explicit document type string.  When omitted the type
+                      is inferred from the source extension.
 
         Returns:
-            Enriched metadata dictionary.
+            New :class:`Document` with a copy of the original metadata plus
+            the enriched fields.
         """
-        metadata: dict[str, Any] = {
-            "source_url": source_url,
-            "doc_type": doc_type,
-            "created_at": time.time(),
-            "checksum": hashlib.sha256(content.encode()).hexdigest(),
-        }
-        if extra:
-            metadata.update(extra)
-        return metadata
+        metadata = dict(doc.metadata)
+
+        # source
+        if source and not metadata.get("source"):
+            metadata["source"] = source
+
+        # created_at
+        if not metadata.get("created_at"):
+            metadata["created_at"] = datetime.now(timezone.utc).isoformat()
+
+        # doc_type
+        if not metadata.get("doc_type"):
+            if doc_type:
+                metadata["doc_type"] = doc_type
+            else:
+                src: str = metadata.get("source", "")
+                ext = Path(src).suffix.lower()
+                metadata["doc_type"] = _EXT_TO_TYPE.get(ext, "unknown")
+
+        # ingestion_version
+        if not metadata.get("ingestion_version"):
+            metadata["ingestion_version"] = _INGESTION_VERSION
+
+        return Document(page_content=doc.page_content, metadata=metadata)

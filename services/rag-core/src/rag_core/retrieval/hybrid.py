@@ -1,153 +1,181 @@
-"""Hybrid retriever combining dense vector search and sparse BM25 via RRF."""
+"""HybridRetriever — dense + sparse retrieval with RRF fusion and reranking."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
-from rag_core.retrieval.rrf import reciprocal_rank_fusion
-from rag_core.retrieval.reranker import CrossEncoderReranker
+from langchain_core.documents import Document
 
+from ..config.settings import Settings
+from ..embeddings.local_bge import LocalBGEEmbedder
+from ..stores.opensearch_store import OpenSearchStore
+from ..stores.pgvector_store import PgVectorStore
+from .acl_filter import ACLFilter
+from .reranker import CrossEncoderReranker
+from .rrf import reciprocal_rank_fusion
 
 logger = logging.getLogger(__name__)
 
 
-class Document:
-    """Lightweight document wrapper for retrieval results."""
-
-    def __init__(self, page_content: str, metadata: dict[str, Any]) -> None:
-        self.page_content = page_content
-        self.metadata = metadata
-
-    def __repr__(self) -> str:
-        return f"Document(doc_id={self.metadata.get('doc_id')!r}, score={self.metadata.get('score')})"
-
-
 class HybridRetriever:
-    """Combines pgvector dense retrieval and OpenSearch BM25 via RRF fusion.
+    """Enterprise-grade hybrid retriever for the MCP security RAG pipeline.
 
-    Architecture:
-        1. Embed the query with the local BGE embedder.
-        2. Fire dense (pgvector) and sparse (OpenSearch) queries in parallel.
-        3. Fuse ranked lists with Reciprocal Rank Fusion (k=60).
-        4. Apply ACL filter so agents only see authorised documents.
-        5. Rerank with a cross-encoder to maximise relevance in the top-K.
+    Retrieval pipeline (executed per query):
+
+    1. **Embed query** — :class:`LocalBGEEmbedder` with BGE query prefix.
+    2. **Dense retrieval** — cosine ANN search via :class:`PgVectorStore`.
+    3. **Sparse retrieval** — BM25 full-text search via :class:`OpenSearchStore`.
+    4. **RRF fusion** — :func:`reciprocal_rank_fusion` merges both ranked
+       lists into a single score-ordered list.
+    5. **ACL filter** — :class:`ACLFilter` removes documents the agent is
+       not permitted to read.
+    6. **Cross-encoder reranking** — :class:`CrossEncoderReranker` selects the
+       best *top_k* results from the fused candidate pool.
+
+    All blocking I/O and model inference is offloaded to the default thread
+    pool via :func:`asyncio.get_event_loop().run_in_executor` so the method
+    is safe to ``await`` from an async web handler.
+
+    Args:
+        settings: Application settings instance.
     """
 
-    def __init__(
-        self,
-        pgvector_store: Any | None = None,
-        opensearch_store: Any | None = None,
-        embedder: Any | None = None,
-        reranker: CrossEncoderReranker | None = None,
-        rrf_k: int = 60,
-    ) -> None:
-        self._pgvector = pgvector_store
-        self._opensearch = opensearch_store
-        self._embedder = embedder
-        self._reranker = reranker or CrossEncoderReranker()
-        self._rrf_k = rrf_k
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.embedder = LocalBGEEmbedder(model_name=settings.EMBEDDING_MODEL)
+        self.pgvector = PgVectorStore(
+            settings.POSTGRES_URL, dim=settings.EMBEDDING_DIM
+        )
+        self.opensearch = OpenSearchStore(
+            settings.OPENSEARCH_URL, dim=settings.EMBEDDING_DIM
+        )
+        self.reranker = CrossEncoderReranker()
+        self.acl_filter = ACLFilter()
+
+    # ── Public API ────────────────────────────────────────────────────────
 
     async def retrieve(
         self,
         query: str,
         top_k: int = 10,
-        acl_filter: dict[str, Any] | None = None,
-    ) -> list[Document]:
-        """Retrieve and fuse documents for a query.
+        acl_context: Optional[Dict[str, Any]] = None,
+    ) -> List[Document]:
+        """Retrieve the most relevant documents for *query*.
 
         Args:
-            query: Natural language query string.
-            top_k: Number of documents to return after reranking.
-            acl_filter: Optional dict with 'tier' and/or 'roles' keys for ACL filtering.
+            query:       Natural language query string.
+            top_k:       Number of documents to return after reranking.
+            acl_context: Optional ACL context dict.  Recognised keys:
+
+                         * ``agent_tier``  (``str``)       — e.g. ``"internal"``
+                         * ``agent_roles`` (``List[str]``) — e.g. ``["developer"]``
+                         * ``agent_id``   (``str``)        — agent identifier
 
         Returns:
-            Ordered list of Document objects, most relevant first.
+            List of :class:`Document` objects sorted by relevance, at most
+            *top_k* entries.  Returns an empty list when the query is empty or
+            no documents survive filtering.
         """
-        # Embed the query
-        query_embedding = await self._embed_query(query)
+        if not query or not query.strip():
+            logger.warning("HybridRetriever.retrieve called with empty query.")
+            return []
 
-        # Run dense and sparse retrieval in parallel
-        dense_docs, sparse_docs = await asyncio.gather(
-            self._dense_retrieve(query_embedding, top_k=top_k * 2),
-            self._sparse_retrieve(query, top_k=top_k * 2),
+        loop = asyncio.get_event_loop()
+        candidate_multiplier = 3  # Fetch extra candidates for reranking headroom
+
+        # ── Step 1: Embed query ──────────────────────────────────────────
+        query_embedding: List[float] = await loop.run_in_executor(
+            None, self.embedder.embed_query, query
         )
 
-        # Fuse rankings
-        fused = reciprocal_rank_fusion(
-            [dense_docs, sparse_docs],
-            k=self._rrf_k,
+        # ── Step 2: Dense retrieval (pgvector cosine ANN) ───────────────
+        pg_filter = self._acl_to_pg_filter(acl_context)
+        pg_results: List[Tuple[Document, float]] = await loop.run_in_executor(
+            None,
+            lambda: self.pgvector.search(
+                query_embedding,
+                top_k=top_k * candidate_multiplier,
+                filter=pg_filter,
+            ),
+        )
+        pg_docs: List[Document] = [doc for doc, _ in pg_results]
+        logger.debug("HybridRetriever: pgvector returned %d results.", len(pg_docs))
+
+        # ── Step 3: Sparse BM25 retrieval (OpenSearch) ──────────────────
+        os_filter = self._acl_to_os_filter(acl_context)
+        os_results: List[Tuple[Document, float]] = await loop.run_in_executor(
+            None,
+            lambda: self.opensearch.bm25_search(
+                query,
+                top_k=top_k * candidate_multiplier,
+                filter=os_filter,
+            ),
+        )
+        os_docs: List[Document] = [doc for doc, _ in os_results]
+        logger.debug("HybridRetriever: OpenSearch BM25 returned %d results.", len(os_docs))
+
+        if not pg_docs and not os_docs:
+            logger.info("HybridRetriever: no results from either store.")
+            return []
+
+        # ── Step 4: RRF fusion ───────────────────────────────────────────
+        fused: List[Tuple[Document, float]] = reciprocal_rank_fusion(
+            [pg_docs, os_docs], k=60
+        )
+        logger.debug("HybridRetriever: RRF fused to %d unique candidates.", len(fused))
+
+        # ── Step 5: ACL filter ───────────────────────────────────────────
+        if acl_context:
+            fused_docs = [doc for doc, _ in fused]
+            allowed = self.acl_filter.filter(fused_docs, acl_context)
+            # Reconstruct (doc, score) list preserving RRF scores
+            allowed_set = {id(doc) for doc in allowed}
+            fused = [
+                (doc, score)
+                for doc, score in fused
+                if id(doc) in allowed_set
+            ]
+            logger.debug(
+                "HybridRetriever: %d documents remain after ACL filter.", len(fused)
+            )
+
+        # ── Step 6: Cross-encoder reranking ─────────────────────────────
+        candidate_docs = [doc for doc, _ in fused[: top_k * candidate_multiplier]]
+
+        if not candidate_docs:
+            return []
+
+        reranked: List[Tuple[Document, float]] = await loop.run_in_executor(
+            None,
+            lambda: self.reranker.rerank(query, candidate_docs, top_k=top_k),
         )
 
-        # Extract Document objects from (Document, score) tuples
-        candidates = [doc for doc, _score in fused]
+        return [doc for doc, _ in reranked]
 
-        # Apply ACL filter
-        if acl_filter:
-            candidates = self._apply_acl_filter(candidates, acl_filter)
+    # ── Private helpers ───────────────────────────────────────────────────
 
-        if not candidates:
-            return []
+    @staticmethod
+    def _acl_to_pg_filter(
+        acl_context: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Translate ACL context into a pgvector metadata filter."""
+        if not acl_context:
+            return None
+        agent_tier = acl_context.get("agent_tier")
+        if agent_tier:
+            return {"acl_tiers": agent_tier}
+        return None
 
-        # Rerank
-        reranked = self._reranker.rerank(query, candidates, top_k=top_k)
-        return reranked
-
-    async def _embed_query(self, query: str) -> list[float]:
-        """Embed the query, falling back to a zero vector if no embedder configured."""
-        if self._embedder is None:
-            logger.warning("No embedder configured; returning zero vector for query embedding")
-            return [0.0] * 1536
-
-        try:
-            embeddings = self._embedder.embed([query])
-            return embeddings[0]
-        except Exception as exc:
-            logger.error("Embedding failed: %s", exc)
-            return [0.0] * 1536
-
-    async def _dense_retrieve(
-        self, query_embedding: list[float], top_k: int
-    ) -> list[Document]:
-        """Query pgvector for nearest-neighbour documents."""
-        if self._pgvector is None:
-            return []
-        try:
-            return await asyncio.to_thread(
-                self._pgvector.search, query_embedding, top_k=top_k, filter={}
-            )
-        except Exception as exc:
-            logger.error("pgvector retrieval failed: %s", exc)
-            return []
-
-    async def _sparse_retrieve(self, query: str, top_k: int) -> list[Document]:
-        """Query OpenSearch for BM25-ranked documents."""
-        if self._opensearch is None:
-            return []
-        try:
-            return await asyncio.to_thread(
-                self._opensearch.search_bm25, query, top_k=top_k
-            )
-        except Exception as exc:
-            logger.error("OpenSearch retrieval failed: %s", exc)
-            return []
-
-    def _apply_acl_filter(
-        self, docs: list[Document], acl_filter: dict[str, Any]
-    ) -> list[Document]:
-        """Filter documents that the requesting agent is not permitted to see."""
-        agent_tier = acl_filter.get("tier", "T0")
-        tier_order = {"T0": 0, "T1": 1, "T2": 2}
-        agent_tier_rank = tier_order.get(agent_tier, 0)
-
-        filtered: list[Document] = []
-        for doc in docs:
-            acl_tiers: list[str] = doc.metadata.get("acl_tiers", ["T0", "T1", "T2"])
-            # Allow if ANY of the doc's permitted tiers is <= agent's tier
-            allowed = any(
-                tier_order.get(t, 99) <= agent_tier_rank for t in acl_tiers
-            )
-            if allowed:
-                filtered.append(doc)
-        return filtered
+    @staticmethod
+    def _acl_to_os_filter(
+        acl_context: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Translate ACL context into an OpenSearch filter."""
+        if not acl_context:
+            return None
+        agent_tier = acl_context.get("agent_tier")
+        if agent_tier:
+            return {"acl_tiers": agent_tier}
+        return None

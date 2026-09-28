@@ -246,7 +246,7 @@ Commit messages follow the Conventional Commits specification. The pre-commit ho
 
 <body — wrap at 72 characters, explain why not what>
 
-<footer — BREAKING CHANGE, Closes #issue, Co-Authored-By>
+<footer — BREAKING CHANGE, Closes #issue>
 ```
 
 ---

@@ -76,7 +76,7 @@ async def analyze_tool_calls(state: AgentState) -> AgentState:
     """Analyse tool call logs against retrieved policies using LiteLLM/Bedrock.
 
     Builds a prompt that includes the retrieved policy excerpts and the raw
-    tool call logs, then calls Claude via litellm.acompletion.
+    tool call logs, then calls the LLM provider via litellm.acompletion.
     Appends the analysis result to ``state["messages"]``.
     """
     log = logger.bind(node="analyze_tool_calls", agent=_CALLER_AGENT_ID)

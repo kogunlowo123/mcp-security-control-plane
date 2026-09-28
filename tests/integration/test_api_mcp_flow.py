@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import httpx
 from httpx import AsyncClient
 
 from api.main import create_app
@@ -29,9 +30,9 @@ def valid_token():
 
 @pytest.mark.asyncio
 async def test_health_endpoint_returns_ok(app):
-    """GET /api/v1/health returns 200."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        response = await client.get("/api/v1/health")
+    """GET /health returns 200."""
+    async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/health")
 
     assert response.status_code == 200
     data = response.json()
@@ -41,9 +42,9 @@ async def test_health_endpoint_returns_ok(app):
 
 @pytest.mark.asyncio
 async def test_readiness_endpoint(app):
-    """GET /api/v1/readiness returns 200 or 503 (structure check only)."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        response = await client.get("/api/v1/readiness")
+    """GET /readiness returns 200 or 503 (structure check only)."""
+    async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/readiness")
 
     # In test environment dependencies may not be available; accept either status
     assert response.status_code in (200, 503)
@@ -55,7 +56,7 @@ async def test_readiness_endpoint(app):
 @pytest.mark.asyncio
 async def test_list_tools_returns_catalog(app, valid_token):
     """GET /api/v1/mcp/tools returns tool catalog."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get(
             "/api/v1/mcp/tools",
             headers={"Authorization": f"Bearer {valid_token}"},
@@ -91,7 +92,7 @@ async def test_full_authorize_audit_flow(app, valid_token):
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             auth_response = await client.post(
                 "/api/v1/mcp/authorize",
                 json={
@@ -116,7 +117,7 @@ async def test_full_authorize_audit_flow(app, valid_token):
         mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=None)
 
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             audit_response = await client.post(
                 "/api/v1/mcp/audit",
                 json={
@@ -147,7 +148,7 @@ async def test_violations_endpoint_returns_list(app, valid_token):
         mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
         mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=None)
 
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/mcp/violations",
                 headers={"Authorization": f"Bearer {valid_token}"},

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+import httpx
 from httpx import AsyncClient
 
 from api.main import create_app
@@ -59,7 +60,7 @@ async def test_authorize_valid_request_returns_permit(app, valid_agent_token):
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/v1/mcp/authorize",
                 json={
@@ -80,7 +81,7 @@ async def test_authorize_valid_request_returns_permit(app, valid_agent_token):
 @pytest.mark.asyncio
 async def test_authorize_missing_token_returns_401(app):
     """Request without Authorization header returns 401."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/v1/mcp/authorize",
             json={
@@ -97,7 +98,7 @@ async def test_authorize_missing_token_returns_401(app):
 @pytest.mark.asyncio
 async def test_authorize_invalid_token_returns_401(app):
     """Request with malformed JWT returns 401."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/v1/mcp/authorize",
             json={
@@ -133,7 +134,7 @@ async def test_authorize_opa_deny_returns_deny_decision(app, valid_agent_token):
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/v1/mcp/authorize",
                 json={
@@ -171,7 +172,7 @@ async def test_authorize_scope_exceeded_returns_deny(app, t0_agent_token):
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_client_cls.return_value = mock_client
 
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
                 "/api/v1/mcp/authorize",
                 json={
@@ -192,8 +193,8 @@ async def test_authorize_scope_exceeded_returns_deny(app, t0_agent_token):
 @pytest.mark.asyncio
 async def test_health_endpoint(app):
     """Health endpoint returns 200 with healthy status."""
-    async with AsyncClient(app=app, base_url="http://test") as client:
-        response = await client.get("/api/v1/health")
+    async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/health")
 
     assert response.status_code == 200
     data = response.json()

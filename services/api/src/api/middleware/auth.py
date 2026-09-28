@@ -23,10 +23,35 @@ from api.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Paths that do not require authentication
 PUBLIC_PATHS: frozenset[str] = frozenset(
     ["/health", "/readiness", "/docs", "/redoc", "/openapi.json"]
 )
+
+
+def _decode_token(token: str) -> dict:
+    """Decode and validate a JWT, supporting both RS256 (broker-issued) and HS256."""
+    unverified = jwt.get_unverified_header(token)
+    algorithm = unverified.get("alg", "HS256")
+
+    if algorithm == "RS256":
+        try:
+            from identity.issuance.broker.broker import _PUBLIC_KEY_PEM  # noqa: PLC0415
+            return jwt.decode(
+                token,
+                _PUBLIC_KEY_PEM,
+                algorithms=["RS256"],
+                options={"require": ["sub", "exp"]},
+            )
+        except ImportError:
+            pass
+
+    return jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        audience=settings.jwt_audience if settings.jwt_algorithm != "RS256" else None,
+        options={"require": ["sub", "exp"]},
+    )
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -67,13 +92,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         token = auth_header[len("Bearer "):]
 
         try:
-            payload = jwt.decode(
-                token,
-                settings.jwt_secret,
-                algorithms=[settings.jwt_algorithm],
-                audience=settings.jwt_audience,
-                options={"require": ["sub", "exp"]},
-            )
+            payload = _decode_token(token)
         except jwt.ExpiredSignatureError:
             return JSONResponse(
                 status_code=401,

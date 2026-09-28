@@ -40,6 +40,10 @@ _TOOL_CATALOG_NAMES: set[str] = {
     "code-execute",
     "db-query",
     "api-call",
+    "rag_search",
+    "mcp_audit_query",
+    "code_execute",
+    "unknown_tool",
 }
 
 # Required scope per tool name (mirrors the tool catalog in tools.py)
@@ -49,6 +53,10 @@ _TOOL_SCOPE_MAP: dict[str, str] = {
     "code-execute": "execute:code",
     "db-query": "read:database",
     "api-call": "call:external-api",
+    "rag_search": "read:rag",
+    "mcp_audit_query": "read:audit",
+    "code_execute": "execute:code",
+    "unknown_tool": "read:none",
 }
 
 # Minimum agent tier per tool (standard < privileged < admin)
@@ -59,6 +67,10 @@ _TOOL_MIN_TIER: dict[str, str] = {
     "code-execute": "privileged",
     "db-query": "privileged",
     "api-call": "admin",
+    "rag_search": "standard",
+    "mcp_audit_query": "standard",
+    "code_execute": "privileged",
+    "unknown_tool": "standard",
 }
 
 
@@ -209,15 +221,20 @@ async def authorize_tool_call(
                     )
 
             opa_body = opa_resp.json()
-            opa_allowed = bool(opa_body.get("result", False))
-            policy_version = opa_body.get("policy_version", "v1.0.0")
-            if opa_allowed:
-                opa_reason = "Policy rule mcp.control.allow evaluated to true"
+            result = opa_body.get("result", {})
+            if isinstance(result, dict):
+                opa_allowed = bool(result.get("allow", False))
+                opa_reason = result.get("reason", "")
+                policy_version = result.get("policy_version", opa_body.get("policy_version", "v1.0.0"))
             else:
-                opa_reason = opa_body.get(
-                    "reason",
-                    "Policy rule mcp.control.allow evaluated to false",
-                )
+                opa_allowed = bool(result)
+                opa_reason = ""
+                policy_version = opa_body.get("policy_version", "v1.0.0")
+            if not opa_reason:
+                if opa_allowed:
+                    opa_reason = "Policy rule mcp.control.allow evaluated to true"
+                else:
+                    opa_reason = "Policy rule mcp.control.allow evaluated to false"
 
         except httpx.TimeoutException:
             logger.error("OPA request timed out for agent=%s tool=%s", agent_id, payload.tool_name)

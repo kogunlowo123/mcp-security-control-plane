@@ -7,6 +7,7 @@ import time
 from unittest.mock import patch
 
 import pytest
+import httpx
 from httpx import AsyncClient
 
 from api.main import create_app
@@ -76,7 +77,7 @@ async def test_api_returns_429_when_rate_limited():
     token = broker.issue_token("rl-agent-001", "T0", ["rag_search"])
 
     with patch("api.middleware.ratelimit.InMemoryRateLimiter.check_and_increment", return_value=False):
-        async with AsyncClient(app=app, base_url="http://test") as client:
+        async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/mcp/tools",
                 headers={"Authorization": f"Bearer {token}"},

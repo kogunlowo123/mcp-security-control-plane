@@ -177,7 +177,7 @@ jobs:
           backend-dynamodb-table: ${{ secrets.TF_LOCK_TABLE }}
 
       - name: Download plan artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: tfplan-dev-${{ github.sha }}
           path: ./infra/environments/dev
@@ -257,7 +257,7 @@ jobs:
           backend-dynamodb-table: ${{ secrets.TF_LOCK_TABLE }}
 
       - name: Download plan artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: tfplan-staging-${{ github.sha }}
           path: ./infra/environments/staging
@@ -336,7 +336,7 @@ jobs:
           backend-dynamodb-table: ${{ secrets.TF_LOCK_TABLE }}
 
       - name: Download plan artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: tfplan-prod-${{ github.sha }}
           path: ./infra/environments/prod

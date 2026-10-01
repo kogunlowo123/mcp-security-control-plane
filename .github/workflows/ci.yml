@@ -51,7 +51,7 @@ jobs:
         run: mypy . --show-error-codes
 
       - name: Lint Dockerfiles with hadolint
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3.5.0
         with:
           recursive: true
           failure-threshold: warning
